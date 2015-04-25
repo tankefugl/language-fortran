@@ -4,7 +4,7 @@ module Language.Fortran.Parser  where
 import Language.Fortran
 import Language.Fortran.PreProcess
 
-import Language.Haskell.Syntax (SrcLoc(..))
+import qualified Language.Haskell.Syntax as LH (SrcLoc(..))
 import Language.Haskell.ParseMonad 
 import Language.Fortran.Lexer
 import Data.Char (toLower)
@@ -92,7 +92,7 @@ import Debug.Trace
  ELEMENTAL 		{ Key "elemental" }
  ELSE 			{ Key "else" }
  ELSEIF 		{ Key "elseif" }
--- ELSEWHERE 		{ Key "elsewhere" }
+ ELSEWHERE 		{ Key "elsewhere" }
  END 			{ Key "end" }
  ENDIF			{ Key "endif" }
  ENDDO			{ Key "enddo" }
@@ -166,6 +166,7 @@ import Debug.Trace
  '1'                    { Num "1" }    -- units-of-measure extension
  USE 			{ Key "use" }
  VOLATILE 		{ Key "volatile" }
+ WHILE 			{ Key "while" }
  WHERE 			{ Key "where" }
  WRITE 			{ Key "write" }
  ID                     { ID $$ }
@@ -177,7 +178,7 @@ import Debug.Trace
 include_program :: { Program A0 }
 include_program 
 : srcloc newline specification_part_top {% do { s <- getSrcSpan $1; 
-                                                return [IncludeProg () s $3] } }
+                                                return [IncludeProg () s $3 Nothing] }}
 
 executable_program :: { Program A0 }
 executable_program
@@ -206,7 +207,8 @@ vlist
   | variable                                      { [$1] }
 
 newline :: {}
-newline : '\n' newline0 {}
+newline : '\n' newline0 {} 
+-- | ';' newline0 {}
 
 newline0 :: {}
 newline0 : newline  {} 
@@ -293,7 +295,7 @@ module
    : srcloc module_stmt use_stmt_list implicit_part specification_part_top module_subprogram_part end_module_stmt newline0
          {%  do { s <- getSrcSpan $1;
                   name <- cmpNames $2 $7  "module";
-		  return (Module ()s name $3 $4 $5 $6); } }
+		  return (Module () s name $3 $4 $5 $6); } }
 
 module_stmt :: { SubName A0 }
 module_stmt
@@ -504,7 +506,7 @@ access_spec
 -- start: units-of-measure extension parsing
 
 unit_stmt :: { Decl A0 }
-  : srcloc UNIT '::' unit_decl_list  {% getSrcSpan $1 >>= (\s -> return $ MeasureUnitDef () s $4) }
+  : UNIT '::' unit_decl_list  {% getSrcSpanNull >>= (\s -> return $ MeasureUnitDef () s $3) }
 
 unit_decl_list :: { [(MeasureUnit, MeasureUnitSpec A0)] }
 unit_decl_list
@@ -576,6 +578,7 @@ specification_stmt :: { Decl A0 }
 specification_stmt
   : access_stmt            { $1 }
   | attr_stmt              { $1 }
+  | unit_stmt              { $1 }
 --  | allocatable_stmt       { $1 }
   | common_stmt            { $1 }
 | data_stmt              { DataDecl () $1 }
@@ -589,7 +592,6 @@ specification_stmt
 --  | pointer_stmt           { $1 }
   | save_stmt              { $1 }
 --  | target_stmt            { $1 } 
-  | unit_stmt              { $1 }
 
 save_stmt :: { Decl A0 }
  : SAVE { AccessStmt () (Save ()) [] }
@@ -1076,6 +1078,7 @@ do_construct
 block_do_construct :: { Fortran A0 } 
 block_do_construct                  
 : srcloc nonlabel_do_stmt newline do_block {% getSrcSpan $1 >>= (\s -> return $ For () s (fst4 $2) (snd4 $2) (trd4 $2) (frh4 $2) $4) } 
+| srcloc DO WHILE  '(' logical_expr ')' newline do_block {% getSrcSpan $1 >>= (\s -> return $ DoWhile () s $5 $8) }
 | srcloc DO num ',' loop_control newline do_block_num 
                     {% do { (fs, n) <- return $ $7;
 			    s       <- getSrcSpan $1;
@@ -1148,7 +1151,9 @@ execution_part
 executable_construct_list :: { Fortran A0 }
 executable_construct_list
 : executable_construct newline executable_construct_list { FSeq () (spanTrans $1 $3) $1 $3 }
+| executable_construct ';' executable_construct_list { FSeq () (spanTrans $1 $3) $1 $3 }
 | executable_construct newline { $1 }
+| executable_construct ';' { $1 }
 
 
 executable_construct :: { Fortran A0 }
@@ -1158,12 +1163,10 @@ executable_construct
 
 executable_constructP :: { Fortran A0 }
 executable_constructP
-: --  | case_construct
-    do_construct                                  { $1 }
+:   do_construct                                  { $1 }
   | if_construct                                  { $1 }
   | action_stmt                                   { $1 }
---  | forall_construct
---  | where_construct
+
  
 equivalence_stmt :: { Decl A0 }
 equivalence_stmt 
@@ -1178,7 +1181,7 @@ action_stmt
   | close_stmt                                    { $1 }
   | continue_stmt                                 { $1 }
   | cycle_stmt                                    { $1 }
-| srcloc data_stmt                              {% getSrcSpan $1 >>= (\s -> return $ DataStmt () s $2) }
+  | srcloc data_stmt                              {% getSrcSpan $1 >>= (\s -> return $ DataStmt () s $2) }
   | deallocate_stmt                               { $1 }
   | endfile_stmt                                  { $1 }
 --  | end_function_stmt
@@ -1201,7 +1204,7 @@ action_stmt
   | stop_stmt                                     { $1 }
   | where_stmt                                    { $1 }
   | write_stmt                                    { $1 }
-| srcloc TEXT				          {% getSrcSpan $1 >>= (\s -> return $ TextStmt () s $2) }
+  | srcloc TEXT				          {% getSrcSpan $1 >>= (\s -> return $ TextStmt () s $2) }
 
 pause_stmt :: { Fortran A0 }
 pause_stmt : srcloc PAUSE STR {% getSrcSpan $1 >>= (\s -> return $ Pause () s $3) }
@@ -1625,6 +1628,7 @@ output_item
 read_stmt :: { Fortran A0 }
 read_stmt
 : srcloc READ '(' io_control_spec_list ')' input_item_list {% getSrcSpan $1 >>= (\s -> return $ ReadS () s $4 $6) }
+| srcloc READ io_control_spec ',' input_item_list   {% getSrcSpan $1 >>= (\s -> return $ ReadS () s $3 $5) }
 | srcloc READ '(' io_control_spec_list ')'                 {% getSrcSpan $1 >>= (\s -> return $ ReadS () s $4 []) }
 
 
@@ -1656,7 +1660,6 @@ io_control_spec_list :
 | io_control_spec                           { $1 }
 
 -- (unit, fmt = format), (rec, advance = expr), (nml, iostat, id = var), (err, end, eor = label)
-
 
 io_control_spec :: { [Spec A0] } 
 io_control_spec
@@ -1694,6 +1697,7 @@ input_item_list :: { [Expr A0] }
 input_item_list
   : input_item_list ',' input_item                { $1++[$3] }
   | input_item                                    { [$1] }
+
 input_item :: { Expr A0 }
 input_item
   : variable                                      { $1 }
@@ -1761,7 +1765,10 @@ stop_code
 
 where_stmt :: { Fortran A0 }
 where_stmt
-: srcloc WHERE '(' mask_expr ')' where_assignment_stmt {% getSrcSpan $1 >>= (\s -> return $ Where () s $4 $6) }
+: srcloc WHERE '(' mask_expr ')' where_assignment_stmt {% getSrcSpan $1 >>= (\s -> return $ Where () s $4 $6 Nothing) } 
+| srcloc WHERE '(' mask_expr ')' newline where_assignment_stmt {% getSrcSpan $1 >>= (\s -> return $ Where () s $4 $7 Nothing) } 
+|  srcloc WHERE '(' mask_expr ')' newline where_assignment_stmt newline ELSEWHERE newline where_assignment_stmt 
+newline END WHERE {% getSrcSpan $1 >>= (\s -> return $ Where () s $4 $7 (Just $11)) }
 
 where_assignment_stmt :: { Fortran A0 }
 where_assignment_stmt
@@ -1781,7 +1788,7 @@ srcloc :: { SrcLoc }  :    {% getSrcLoc' }
 
 {
 
-getSrcLoc' = do (SrcLoc f l c) <- getSrcLoc
+getSrcLoc' = do (LH.SrcLoc f l c) <- getSrcLoc
                 return (SrcLoc f l (c - 1))
 
 -- Initial annotations from parser

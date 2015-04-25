@@ -17,9 +17,7 @@ import Data.Generics -- Typeable class and boilerplate generic functions
 
 import Data.Maybe
 import Data.List
-
-
-import Language.Haskell.Syntax (SrcLoc)
+-- import Language.Haskell.Syntax (SrcLoc(..))
 
 -----------------------------------------------------------------------------------
 -- Language definition for Fortran (covers a lot of standards, but still incomplete)
@@ -37,6 +35,18 @@ import Language.Haskell.Syntax (SrcLoc)
 
 -----------------------------------------------------------------------------------
 
+
+data SrcLoc = SrcLoc {
+                srcFilename :: String,
+                srcLine :: Int,
+                srcColumn :: Int
+                }
+            deriving (Eq, Typeable, Data)
+
+instance Show SrcLoc where
+    -- A special instance if the filename is set to "compact" to reduce size of outputs
+    show (SrcLoc "compact" l c) = "{l" ++ show l ++ ",c" ++ show c ++ "}"
+    show (SrcLoc f l c) = "{" ++ f ++ ", line = " ++ show l ++ ", col = " ++ show c ++ "}"
 
 
 type SrcSpan = (SrcLoc, SrcLoc)
@@ -77,7 +87,7 @@ data ProgUnit  p = Main      p SrcSpan                      (SubName p)  (Arg p)
                 | PSeq       p SrcSpan (ProgUnit p) (ProgUnit p)   -- sequence of programs
                 | Prog       p SrcSpan (ProgUnit p)                -- useful for {#p: #q : program ... }
                 | NullProg   p SrcSpan                             -- null
-                | IncludeProg p SrcSpan (Decl p)
+                | IncludeProg p SrcSpan (Decl p) (Maybe (Fortran p))
                 deriving (Show, Functor, Typeable, Data, Eq)
 
 data Implicit p = ImplicitNone p | ImplicitNull p 
@@ -173,6 +183,7 @@ data IntentAttr p = In p
 				
 data Fortran  p = Assg p SrcSpan (Expr p) (Expr p) 
                 | For  p SrcSpan (VarName p) (Expr p) (Expr p) (Expr p) (Fortran p)
+                | DoWhile  p SrcSpan (Expr p) (Fortran p)
                 | FSeq p SrcSpan (Fortran p) (Fortran p)
                 | If   p SrcSpan (Expr p) (Fortran p) [((Expr p),(Fortran p))] (Maybe (Fortran p))
                 | Allocate p SrcSpan (Expr p) (Expr p)
@@ -194,7 +205,7 @@ data Fortran  p = Assg p SrcSpan (Expr p) (Expr p)
                 | Pause p SrcSpan String
                 | Rewind p SrcSpan [Spec p]
                 | Stop p SrcSpan (Expr p)
-                | Where p SrcSpan (Expr p) (Fortran p)
+                | Where p SrcSpan (Expr p) (Fortran p) (Maybe (Fortran p))
                 | Write p SrcSpan [Spec p] [(Expr p)]
                 | PointerAssg p SrcSpan  (Expr p) (Expr p)
                 | Return p SrcSpan  (Expr p)
@@ -328,6 +339,7 @@ instance Span (Expr a) where
 instance Span (Fortran a) where
     srcSpan (Assg x sp e1 e2)        = sp
     srcSpan (For x sp v e1 e2 e3 fs) = sp
+    srcSpan (DoWhile x sp e fs)      = sp
     srcSpan (FSeq x sp f1 f2)        = sp
     srcSpan (If x sp e f1 fes f3)    = sp
     srcSpan (Allocate x sp e1 e2)    = sp
@@ -349,7 +361,7 @@ instance Span (Fortran a) where
     srcSpan (Pause x sp _)           = sp
     srcSpan (Rewind x sp s)          = sp 
     srcSpan (Stop x sp e)            = sp
-    srcSpan (Where x sp e f)         = sp 
+    srcSpan (Where x sp e f _)       = sp 
     srcSpan (Write x sp s e)         = sp
     srcSpan (PointerAssg x sp e1 e2) = sp
     srcSpan (Return x sp e)          = sp
@@ -443,6 +455,7 @@ instance Tagged Decl where
     tag (DSeq x _ _)          = x
     tag (TextDecl x _)        = x
     tag (NullDecl x _)        = x
+    tag (MeasureUnitDef x _ _)        = x
 
 instance Tagged DataForm where
     tag (Data x _)         = x
@@ -450,6 +463,7 @@ instance Tagged DataForm where
 instance Tagged Fortran where
     tag (Assg x s e1 e2)        = x
     tag (For x s v e1 e2 e3 fs) = x
+    tag (DoWhile x sp e fs)        = x
     tag (FSeq x sp f1 f2)       = x
     tag (If x sp e f1 fes f3)   = x
     tag (Allocate x sp e1 e2)   = x
@@ -471,7 +485,7 @@ instance Tagged Fortran where
     tag (Pause x sp _)          = x
     tag (Rewind x sp s)         = x 
     tag (Stop x sp e)           = x
-    tag (Where x sp e f)        = x 
+    tag (Where x sp e f _)      = x 
     tag (Write x sp s e)        = x
     tag (PointerAssg x sp e1 e2) = x
     tag (Return x sp e)         = x

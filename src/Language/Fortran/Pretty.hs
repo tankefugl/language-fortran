@@ -17,15 +17,17 @@
 module Language.Fortran.Pretty where
 
 import Language.Fortran
-
+import Debug.Trace
 import Data.List
 
 data Alt1 = Alt1
 data Alt2 = Alt2
+data Alt3 = Alt3
 
 class Alts a 
 instance Alts Alt1
 instance Alts Alt2
+instance Alts Alt3
 
 --instance (OutputF (ProgUnit p) Alt1) => Show (ProgUnit p) where
 --    show p = let ?variant = Alt1 in outputF p
@@ -98,6 +100,7 @@ instance (OutputG (Arg p) v,
           OutputG (BaseType p) v,
           OutputG (Block p) v,
           OutputG (Decl p) v,
+          OutputG (Fortran p) v, 
           OutputG (Implicit p) v,
           OutputG (SubName p) v,
           OutputG (VarName p) v,
@@ -152,7 +155,8 @@ instance (OutputG (Arg p) v,
   outputF (PSeq _ _ p p')  = outputG p++outputG p'
   outputF (Prog _ _ p)     = outputG p
   outputF (NullProg _ _)    = ""
-  outputF (IncludeProg _ _ ds)   = outputG ds
+  outputF (IncludeProg _ _ ds Nothing) = outputG ds 
+  outputF (IncludeProg _ _ ds (Just f)) = outputG ds ++ "\n" ++ outputG f
 
 instance (OutputG (Fortran p) v, OutputG (Decl p) v, OutputG (Implicit p) v, Alts v) =>
             OutputF (Block p) v where
@@ -231,7 +235,9 @@ instance (OutputG (ArgList p) v,
   outputF (ArrayT _ rs bt as e               e')               = outputG bt++" (len="++outputG e'++"kind="++outputG e++")"++" , dimension ("++showRanges rs++")"++outputFList as
 
 
-instance (OutputG (MeasureUnitSpec p) v, Alts v) => OutputF (Attr p) v where --new
+instance (OutputG (ArgList p) v, OutputG (BinOp p) v, OutputG (Expr p) v, OutputG (UnaryOp p) v, 
+          OutputG (VarName p) v, 
+          OutputG (MeasureUnitSpec p) v, Alts v) => OutputF (Attr p) v where --new
     outputF (Allocatable _)      = "allocatable "
     outputF (Parameter _)        = "parameter "
     outputF (External _)         = "external "
@@ -247,7 +253,7 @@ instance (OutputG (MeasureUnitSpec p) v, Alts v) => OutputF (Attr p) v where --n
     outputF (Public _)           = "public "
     outputF (Private _)          = "private "
     outputF (Sequence _)         = "sequence "
-    outputF (Dimension _ _)      = "dimension "
+    outputF (Dimension _ r)      = "dimension (" ++ (showRanges r) ++ ")"
     outputF (MeasureUnit _ u)    = "unit("++outputG u++")"
 
 instance (Alts v) => OutputF (MeasureUnitSpec p) v where
@@ -445,6 +451,8 @@ instance (Indentor (Fortran p),
           OutputG (Fortran p) v, OutputG (Spec p) v, Alts v) => OutputIndF (Fortran p) v where
 
     outputIndF i t@(Assg _ _ v e)            = (indR t i)++outputG v++" = "++outputG e
+    outputIndF i t@(DoWhile _ _ e f)         = (indR t i)++"do while (" ++ outputG e ++ ")\n" ++ 
+                                                 outputIndG (i+1) f ++ "\n" ++ (indR t i) ++ "end do"
     outputIndF i t@(For _ _  (VarName _ "") e e' e'' f)   = (indR t i)++"do \n"++
                                          (outputIndG (i+1) f)++"\n"++(indR t i)++"end do"
     outputIndF i t@(For _ _  v e e' e'' f)   = (indR t i)++"do"++" "++outputG v++" = "++outputG e++", "++
@@ -491,7 +499,8 @@ instance (Indentor (Fortran p),
     outputIndF i t@(Pause _ _ s)                  = (indR t i)++"pause "++ show s ++ "\n"
     outputIndF i t@(Rewind _ _  ss)                  = (indR t i)++"rewind "++asTuple outputG ss++"\n"
     outputIndF i t@(Stop _ _ e)                     = (indR t i)++"stop "++outputG e++"\n"
-    outputIndF i t@(Where _ _ e f)                  = (indR t i)++"where ("++outputG e++") "++outputG f
+    outputIndF i t@(Where _ _ e f Nothing)          = (indR t i)++"where ("++outputG e++") "++outputG f
+    outputIndF i t@(Where _ _ e f (Just f'))        = (indR t i)++"where ("++outputG e++") "++(outputIndG (i + 1) f)++"\n"++(indR t i)++"elsewhere\n" ++ (indR t i) ++ (outputIndG (i + 1) f') ++ "\n" ++ (indR t i) ++ "end where"
     outputIndF i t@(Write _ _ ss es)                = (indR t i)++"write "++asTuple outputG ss++" "++(concat (intersperse "," (map outputG es)))++"\n"
     outputIndF i t@(PointerAssg _ _ e e')           = (indR t i)++outputG e++" => "++outputG e'++"\n"
     outputIndF i t@(Return _ _ e)                   = (indR t i)++"return "++outputG e++"\n"
